@@ -75,7 +75,7 @@ class Trainer:
 
         self.cfg = cfg
         self.build_processor()
-        self.build_data_loader()
+        self.build_train_loader()
         self.build_model()
         self.evaluator = Evaluator(cfg, self.many_idxs, self.med_idxs, self.few_idxs)
         self._writer = None
@@ -359,7 +359,7 @@ class Trainer:
             num_workers=cfg.num_workers, pin_memory=True)
 
 
-    def build_data_loader(self):
+    def build_train_loader(self):
         cfg = self.cfg
         root = cfg.root
         resolution = cfg.resolution
