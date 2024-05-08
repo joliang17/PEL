@@ -29,7 +29,7 @@ from utils.evaluator import Evaluator
 def load_clip_to_cpu(cfg):
     backbone_name = cfg.backbone.lstrip("CLIP-")
     url = clip._MODELS[backbone_name]
-    model_path = clip._download(url)
+    model_path = clip._download(url, root="/fs/nexus-projects/wilddiffusion/gene_diffcls/PEL/clip")
 
     try:
         # loading JIT archive
@@ -78,98 +78,6 @@ class Trainer:
         self.build_model()
         self.evaluator = Evaluator(cfg, self.many_idxs, self.med_idxs, self.few_idxs)
         self._writer = None
-
-    def build_data_loader(self):
-        cfg = self.cfg
-        root = cfg.root
-        resolution = cfg.resolution
-        expand = cfg.expand
-
-        if cfg.backbone.startswith("CLIP"):
-            mean = [0.48145466, 0.4578275, 0.40821073]
-            std = [0.26862954, 0.26130258, 0.27577711]
-        else:
-            mean = [0.5, 0.5, 0.5]
-            std = [0.5, 0.5, 0.5]
-        print("mean:", mean)
-        print("std:", std)
-
-        transform_train = transforms.Compose([
-            transforms.RandomResizedCrop(resolution),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
-        ])
-
-        transform_plain = transforms.Compose([
-            transforms.Resize(resolution),
-            transforms.CenterCrop(resolution),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
-        ])
-
-        if cfg.test_ensemble:
-            transform_test = transforms.Compose([
-                transforms.Resize(resolution + expand),
-                transforms.FiveCrop(resolution),
-                transforms.Lambda(lambda crops: torch.stack([transforms.ToTensor()(crop) for crop in crops])),
-                transforms.Normalize(mean, std),
-            ])
-        else:
-            transform_test = transforms.Compose([
-                transforms.Resize(resolution * 8 // 7),
-                transforms.CenterCrop(resolution),
-                transforms.Lambda(lambda crop: torch.stack([transforms.ToTensor()(crop)])),
-                transforms.Normalize(mean, std),
-            ])
-
-        train_dataset = getattr(datasets, cfg.dataset)(root, train=True, transform=transform_train)
-        train_init_dataset = getattr(datasets, cfg.dataset)(root, train=True, transform=transform_plain)
-        train_test_dataset = getattr(datasets, cfg.dataset)(root, train=True, transform=transform_test)
-        test_dataset = getattr(datasets, cfg.dataset)(root, train=False, transform=transform_test)
-
-        self.num_classes = train_dataset.num_classes
-        self.cls_num_list = train_dataset.cls_num_list
-        self.classnames = train_dataset.classnames
-
-        if cfg.dataset in ["CIFAR100", "CIFAR100_IR10", "CIFAR100_IR50"]:
-            split_cls_num_list = datasets.CIFAR100_IR100(root, train=True).cls_num_list
-        else:
-            split_cls_num_list = self.cls_num_list
-        self.many_idxs = (np.array(split_cls_num_list) > 100).nonzero()[0]
-        self.med_idxs = ((np.array(split_cls_num_list) >= 20) & (np.array(split_cls_num_list) <= 100)).nonzero()[0]
-        self.few_idxs = (np.array(split_cls_num_list) < 20).nonzero()[0]
-
-        if cfg.init_head == "1_shot":
-            init_sampler = DownSampler(train_init_dataset, n_max=1)
-        elif cfg.init_head == "10_shot":
-            init_sampler = DownSampler(train_init_dataset, n_max=10)
-        elif cfg.init_head == "100_shot":
-            init_sampler = DownSampler(train_init_dataset, n_max=100)
-        else:
-            init_sampler = None
-
-        self.train_loader = DataLoader(train_dataset,
-            batch_size=cfg.micro_batch_size, shuffle=True,
-            num_workers=cfg.num_workers, pin_memory=True)
-
-        self.train_init_loader = DataLoader(train_init_dataset,
-            batch_size=64, sampler=init_sampler, shuffle=False,
-            num_workers=cfg.num_workers, pin_memory=True)
-
-        self.train_test_loader = DataLoader(train_test_dataset,
-            batch_size=64, shuffle=False,
-            num_workers=cfg.num_workers, pin_memory=True)
-
-        self.test_loader = DataLoader(test_dataset,
-            batch_size=64, shuffle=False,
-            num_workers=cfg.num_workers, pin_memory=True)
-        
-        assert cfg.batch_size % cfg.micro_batch_size == 0
-        self.accum_step = cfg.batch_size // cfg.micro_batch_size
-
-        print("Total training points:", sum(self.cls_num_list))
-        # print(self.cls_num_list)
 
     def build_model(self):
         cfg = self.cfg
@@ -365,6 +273,100 @@ class Trainer:
         class_weights = F.normalize(class_weights, dim=-1)
 
         self.head.apply_weight(class_weights)
+
+    # def build_processor(self):
+
+    def build_data_loader(self):
+        cfg = self.cfg
+        root = cfg.root
+        resolution = cfg.resolution
+        expand = cfg.expand
+
+        if cfg.backbone.startswith("CLIP"):
+            mean = [0.48145466, 0.4578275, 0.40821073]
+            std = [0.26862954, 0.26130258, 0.27577711]
+        else:
+            mean = [0.5, 0.5, 0.5]
+            std = [0.5, 0.5, 0.5]
+        print("mean:", mean)
+        print("std:", std)
+
+        transform_train = transforms.Compose([
+            transforms.RandomResizedCrop(resolution),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std),
+        ])
+
+        transform_plain = transforms.Compose([
+            transforms.Resize(resolution),
+            transforms.CenterCrop(resolution),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std),
+        ])
+
+        if cfg.test_ensemble:
+            transform_test = transforms.Compose([
+                transforms.Resize(resolution + expand),
+                transforms.FiveCrop(resolution),
+                transforms.Lambda(lambda crops: torch.stack([transforms.ToTensor()(crop) for crop in crops])),
+                transforms.Normalize(mean, std),
+            ])
+        else:
+            transform_test = transforms.Compose([
+                transforms.Resize(resolution * 8 // 7),
+                transforms.CenterCrop(resolution),
+                transforms.Lambda(lambda crop: torch.stack([transforms.ToTensor()(crop)])),
+                transforms.Normalize(mean, std),
+            ])
+
+        train_dataset = getattr(datasets, cfg.dataset)(root, train=True, transform=transform_train)
+        train_init_dataset = getattr(datasets, cfg.dataset)(root, train=True, transform=transform_plain)
+        train_test_dataset = getattr(datasets, cfg.dataset)(root, train=True, transform=transform_test)
+        test_dataset = getattr(datasets, cfg.dataset)(root, train=False, transform=transform_test)
+
+        self.num_classes = train_dataset.num_classes
+        self.cls_num_list = train_dataset.cls_num_list
+        self.classnames = train_dataset.classnames
+
+        if cfg.dataset in ["CIFAR100", "CIFAR100_IR10", "CIFAR100_IR50"]:
+            split_cls_num_list = datasets.CIFAR100_IR100(root, train=True).cls_num_list
+        else:
+            split_cls_num_list = self.cls_num_list
+        self.many_idxs = (np.array(split_cls_num_list) > 100).nonzero()[0]
+        self.med_idxs = ((np.array(split_cls_num_list) >= 20) & (np.array(split_cls_num_list) <= 100)).nonzero()[0]
+        self.few_idxs = (np.array(split_cls_num_list) < 20).nonzero()[0]
+
+        if cfg.init_head == "1_shot":
+            init_sampler = DownSampler(train_init_dataset, n_max=1)
+        elif cfg.init_head == "10_shot":
+            init_sampler = DownSampler(train_init_dataset, n_max=10)
+        elif cfg.init_head == "100_shot":
+            init_sampler = DownSampler(train_init_dataset, n_max=100)
+        else:
+            init_sampler = None
+
+        self.train_loader = DataLoader(train_dataset,
+            batch_size=cfg.micro_batch_size, shuffle=True,
+            num_workers=cfg.num_workers, pin_memory=True)
+
+        self.train_init_loader = DataLoader(train_init_dataset,
+            batch_size=64, sampler=init_sampler, shuffle=False,
+            num_workers=cfg.num_workers, pin_memory=True)
+
+        self.train_test_loader = DataLoader(train_test_dataset,
+            batch_size=64, shuffle=False,
+            num_workers=cfg.num_workers, pin_memory=True)
+
+        self.test_loader = DataLoader(test_dataset,
+            batch_size=64, shuffle=False,
+            num_workers=cfg.num_workers, pin_memory=True)
+        
+        assert cfg.batch_size % cfg.micro_batch_size == 0
+        self.accum_step = cfg.batch_size // cfg.micro_batch_size
+
+        print("Total training points:", sum(self.cls_num_list))
+        # print(self.cls_num_list)
 
     def train(self):
         cfg = self.cfg

@@ -1,2 +1,2 @@
 dataset: "ImageNet_LT"
-root: "Path/To/Dataset"
+root: "/fs/nexus-datasets/ImageNet/ILSVRC2012"
