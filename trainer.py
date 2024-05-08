@@ -16,7 +16,7 @@ from torchvision import transforms
 
 from clip import clip
 from timm.models.vision_transformer import vit_base_patch16_224
-
+import pdb
 import datasets
 from models import *
 
@@ -74,6 +74,7 @@ class Trainer:
             self.device = torch.device("cuda:{}".format(cfg.gpu))
 
         self.cfg = cfg
+        self.build_processor()
         self.build_data_loader()
         self.build_model()
         self.evaluator = Evaluator(cfg, self.many_idxs, self.med_idxs, self.few_idxs)
@@ -274,9 +275,7 @@ class Trainer:
 
         self.head.apply_weight(class_weights)
 
-    # def build_processor(self):
-
-    def build_data_loader(self):
+    def build_processor(self):
         cfg = self.cfg
         root = cfg.root
         resolution = cfg.resolution
@@ -291,7 +290,7 @@ class Trainer:
         print("mean:", mean)
         print("std:", std)
 
-        transform_train = transforms.Compose([
+        self.transform_train = transforms.Compose([
             transforms.RandomResizedCrop(resolution),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
@@ -320,7 +319,7 @@ class Trainer:
                 transforms.Normalize(mean, std),
             ])
 
-        train_dataset = getattr(datasets, cfg.dataset)(root, train=True, transform=transform_train)
+        train_dataset = getattr(datasets, cfg.dataset)(root, train=True, transform=self.transform_train)
         train_init_dataset = getattr(datasets, cfg.dataset)(root, train=True, transform=transform_plain)
         train_test_dataset = getattr(datasets, cfg.dataset)(root, train=True, transform=transform_test)
         test_dataset = getattr(datasets, cfg.dataset)(root, train=False, transform=transform_test)
@@ -333,25 +332,22 @@ class Trainer:
             split_cls_num_list = datasets.CIFAR100_IR100(root, train=True).cls_num_list
         else:
             split_cls_num_list = self.cls_num_list
+
         self.many_idxs = (np.array(split_cls_num_list) > 100).nonzero()[0]
         self.med_idxs = ((np.array(split_cls_num_list) >= 20) & (np.array(split_cls_num_list) <= 100)).nonzero()[0]
         self.few_idxs = (np.array(split_cls_num_list) < 20).nonzero()[0]
 
         if cfg.init_head == "1_shot":
-            init_sampler = DownSampler(train_init_dataset, n_max=1)
+            self.init_sampler = DownSampler(train_init_dataset, n_max=1)
         elif cfg.init_head == "10_shot":
-            init_sampler = DownSampler(train_init_dataset, n_max=10)
+            self.init_sampler = DownSampler(train_init_dataset, n_max=10)
         elif cfg.init_head == "100_shot":
-            init_sampler = DownSampler(train_init_dataset, n_max=100)
+            self.init_sampler = DownSampler(train_init_dataset, n_max=100)
         else:
-            init_sampler = None
-
-        self.train_loader = DataLoader(train_dataset,
-            batch_size=cfg.micro_batch_size, shuffle=True,
-            num_workers=cfg.num_workers, pin_memory=True)
+            self.init_sampler = None
 
         self.train_init_loader = DataLoader(train_init_dataset,
-            batch_size=64, sampler=init_sampler, shuffle=False,
+            batch_size=64, sampler=self.init_sampler, shuffle=False,
             num_workers=cfg.num_workers, pin_memory=True)
 
         self.train_test_loader = DataLoader(train_test_dataset,
@@ -361,11 +357,24 @@ class Trainer:
         self.test_loader = DataLoader(test_dataset,
             batch_size=64, shuffle=False,
             num_workers=cfg.num_workers, pin_memory=True)
+
+
+    def build_data_loader(self):
+        cfg = self.cfg
+        root = cfg.root
+        resolution = cfg.resolution
+        expand = cfg.expand
+
+        train_dataset = getattr(datasets, cfg.dataset)(root, train=True, transform=self.transform_train)
+
+        self.train_loader = DataLoader(train_dataset,
+            batch_size=cfg.micro_batch_size, shuffle=True,
+            num_workers=cfg.num_workers, pin_memory=True)
         
         assert cfg.batch_size % cfg.micro_batch_size == 0
         self.accum_step = cfg.batch_size // cfg.micro_batch_size
 
-        print("Total training points:", sum(self.cls_num_list))
+        print("Total training points:", len(train_dataset))
         # print(self.cls_num_list)
 
     def train(self):
